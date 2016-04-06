@@ -121,13 +121,15 @@
 					NOT_IN_ROI:0,
 					IN_ROI:1,
 					IN_ROI_EXTREME_LEFT:2,
-					IN_ROI_EXTREME_RIGHT:3
+					IN_ROI_EXTREME_RIGHT:3,
+					INIT:4
 				}
 
 				var recorder = new CanvasRecorder(vid, {
 					disableLogs: false
 				});
 				var videoRecordStart = function() {
+					console.log("STARTED");
 					recorder.record();
 				};
 				var videoRecordStop = function() {
@@ -180,7 +182,7 @@
 					sigma = Math.acos(dz);
 					return sigma;
 				}
-
+				var idx = 0;
 				function getAngleParams(positions){
 					var noseTip = [positions[62][0],positions[62][1]];
 					var noseBase = [positions[37][0],positions[37][1]];
@@ -202,12 +204,13 @@
 
 					var roll = Math.atan2(positions[33][0]-positions[62][0],positions[33][1]-positions[62][1]) //tan2(y,x)
 
-					return { yaw: yaw,
+					return { yaw: (180.0/3.14)*yaw,
         		roll: roll,
        		};
 				}
 
 				var getCentroid = function(pts) {
+					return pts[37];
 					var meanX = 0.0, meanY = 0.0;
 					for(var i = 0; i < pts.length; ++i) {
 						meanX += pts[i][0];
@@ -317,31 +320,35 @@
 						//console.log(cen);
 						//console.log([overlay.width/2, overlay.height/2]);
 						var d = dist(cen, [overlay.width/2, overlay.height/2]);
-						if (d < 20) {
+						if (d < 40) {
 							if(state == FACE_STATE.NOT_IN_ROI) {
-								console.log("Turn left");
+								alert("Turn left");
 								state = FACE_STATE.IN_ROI;
 							}
 							drawEllipse(overlayCC, overlay.width/2, overlay.height/2, overlay.width*0.39, overlay.height*0.52, 'green');
 							var params = getAngleParams(pos);
 							console.log(params.yaw);
-							if(params.yaw < -20) {
-								console.log("Good. Lets start recording");
-								state = FACE_STATE.IN_ROI_EXTREME_LEFT;
+							if(params.yaw > 15) {
 								// TODO: Start recording
-								videoRecordStart();
+								if(state == FACE_STATE.IN_ROI) {
+									alert("Good. Lets start recording");
+									videoRecordStart();
+								}
+								state = FACE_STATE.IN_ROI_EXTREME_LEFT;
 							}
-							else if(params.yaw > 20 && state == FACE_STATE.IN_ROI_EXTREME_LEFT) {
-								console.log("Good. Recording complete");
+							else if(params.yaw < -15 && state == FACE_STATE.IN_ROI_EXTREME_LEFT) {
+								if(state == FACE_STATE.IN_ROI_EXTREME_LEFT) alert("Good. Recording complete");
 								state = FACE_STATE.IN_ROI_EXTREME_RIGHT;
 								// TODO: Finish recording
 								videoRecordStop();
+								state = FACE_STATE.INIT;
 							}
 							else if(state == FACE_STATE.IN_ROI_EXTREME_LEFT) {
 								console.log("Slowly turn to your right.");
 							}
 							else {
-								console.log("Turn left");
+								alert("Turn little more left");
+								state = FACE_STATE.IN_ROI;
 							}
 						}
 						else {
@@ -351,7 +358,6 @@
 						//ctrack.draw(overlay);
 					}
 				}
-
 				// update stats on every iteration
 				document.addEventListener('clmtrackrIteration', function(event) {
 					stats.update();
