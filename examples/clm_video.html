@@ -93,6 +93,12 @@
 		<script src="../js/mossefilter.js"></script>
 		<script src="./ext_js/Stats.js"></script>
 
+		<script src="https://cdn.webrtc-experiment.com/screenshot.js"></script>
+		<script src="https://cdn.webrtc-experiment.com/RecordRTC/Whammy.js"></script>
+		<script src="https://cdn.webrtc-experiment.com/RecordRTC/CanvasRecorder.js"></script>
+		<script src="https://cdn.webrtc-experiment.com/RecordRTC/MediaStreamRecorder.js"></script>
+		<script src="https://cdn.WebRTC-Experiment.com/gumadapter.js"></script>
+
 		<div id="content">
 			<center>
 				<h2>Face record</h2>
@@ -111,6 +117,29 @@
 				var vid = document.getElementById('videoel');
 				var overlay = document.getElementById('overlay');
 				var overlayCC = overlay.getContext('2d');
+				var FACE_STATE = {
+					NOT_IN_ROI:0,
+					IN_ROI:1,
+					IN_ROI_EXTREME_LEFT:2,
+					IN_ROI_EXTREME_RIGHT:3
+				}
+
+				var recorder = new CanvasRecorder(vid, {
+					disableLogs: false
+				});
+				var videoRecordStart = function() {
+					recorder.record();
+				};
+				var videoRecordStop = function() {
+					recorder.stop(function(blob) {
+						var video = document.createElement('video');
+						video.src = URL.createObjectURL(blob);
+						video.setAttribute('style', 'height: 100%; position: absolute; top:0;');
+						document.body.appendChild(video);
+						video.controls = true;
+						video.play();
+					});
+				};
 
 				var ctrack = new clm.tracker({useWebGL : true});
 				ctrack.init(pModel);
@@ -125,6 +154,57 @@
 					startbutton.value = "start";
 					startbutton.disabled = null;
 					startbutton.click();
+				}
+
+				function get_angle_between(pt1,pt2){
+  				return -1.0 * Math.atan2(pt2[1]-pt1[1],pt2[0]-pt1[0]);
+				}
+
+				function get_distance(pt1,pt2){
+  				return Math.sqrt(Math.pow(pt1[0]-pt2[0],2)+Math.pow(pt1[1]-pt2[1],2));
+				}
+
+				function find_sigma(ln,lf, Rn,theta) {
+					var dz=0;
+					var m1 = (ln*ln)/(lf*lf);
+					var m2 = (Math.cos(theta))*(Math.cos(theta));
+
+					if (m2 == 1)
+					{
+						dz = Math.sqrt(	(Rn*Rn)/(m1 + (Rn*Rn))	);
+					}
+					if (m2>=0 && m2<1)
+					{
+						dz = Math.sqrt(	((Rn*Rn) - m1 - 2*m2*(Rn*Rn) + Math.sqrt(	((m1-(Rn*Rn))*(m1-(Rn*Rn))) + 4*m1*m2*(Rn*Rn)	))/ (2*(1-m2)*(Rn*Rn))	);
+					}
+					sigma = Math.acos(dz);
+					return sigma;
+				}
+
+				function getAngleParams(positions){
+					var noseTip = [positions[62][0],positions[62][1]];
+					var noseBase = [positions[37][0],positions[37][1]];
+
+					var midEye = [0.5*(positions[27][0]+positions[27][0]),0.5*(positions[32][1]+positions[32][1])];
+					var mouth = [0.5*(positions[57][0]+positions[60][0]),0.5*(positions[57][1]+positions[60][1])];
+
+					var symm_x = get_angle_between(noseBase, midEye);
+					var tau = get_angle_between(noseBase, noseTip);
+					var theta = Math.abs(tau - symm_x);
+
+					var sigma = find_sigma(get_distance(noseTip, noseBase), get_distance(midEye, mouth), 0.5, theta);
+					var normal = [Math.sin(sigma)*Math.cos(tau),Math.sin(sigma)*Math.sin(-tau),-Math.cos(sigma)];
+
+					var yaw = Math.acos((Math.abs(normal[2]))/(Math.sqrt(normal[0]*normal[0] + normal[1]*normal[1] + normal[2]*normal[2])));
+					if((noseTip[0] - noseBase[0]) < 0) {
+  					yaw = -yaw;
+					}
+
+					var roll = Math.atan2(positions[33][0]-positions[62][0],positions[33][1]-positions[62][1]) //tan2(y,x)
+
+					return { yaw: yaw,
+        		roll: roll,
+       		};
 				}
 
 				var getCentroid = function(pts) {
@@ -225,22 +305,47 @@
 					drawLoop();
 				}
 				var idx = 0;
+				var state = FACE_STATE.NOT_IN_ROI;
 
 				function drawLoop() {
 					requestAnimFrame(drawLoop);
 					overlayCC.clearRect(0, 0, 400, 300);
 					//psrElement.innerHTML = "score :" + ctrack.getScore().toFixed(4);
-					var pos = ctrack.getCurrentPosition()
+					var pos = ctrack.getCurrentPosition();
 					if (pos) {
 						var cen = getCentroid(pos);
 						//console.log(cen);
 						//console.log([overlay.width/2, overlay.height/2]);
 						var d = dist(cen, [overlay.width/2, overlay.height/2]);
-						//console.log(d);
 						if (d < 20) {
+							if(state == FACE_STATE.NOT_IN_ROI) {
+								console.log("Turn left");
+								state = FACE_STATE.IN_ROI;
+							}
 							drawEllipse(overlayCC, overlay.width/2, overlay.height/2, overlay.width*0.39, overlay.height*0.52, 'green');
+							var params = getAngleParams(pos);
+							console.log(params.yaw);
+							if(params.yaw < -20) {
+								console.log("Good. Lets start recording");
+								state = FACE_STATE.IN_ROI_EXTREME_LEFT;
+								// TODO: Start recording
+								videoRecordStart();
+							}
+							else if(params.yaw > 20 && state == FACE_STATE.IN_ROI_EXTREME_LEFT) {
+								console.log("Good. Recording complete");
+								state = FACE_STATE.IN_ROI_EXTREME_RIGHT;
+								// TODO: Finish recording
+								videoRecordStop();
+							}
+							else if(state == FACE_STATE.IN_ROI_EXTREME_LEFT) {
+								console.log("Slowly turn to your right.");
+							}
+							else {
+								console.log("Turn left");
+							}
 						}
 						else {
+							state = FACE_STATE.NOT_IN_ROI;
 							drawEllipse(overlayCC, overlay.width/2, overlay.height/2, overlay.width*0.39, overlay.height*0.52, 'red');
 						}
 						//ctrack.draw(overlay);
